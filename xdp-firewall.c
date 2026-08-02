@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <errno.h>
 #include <unistd.h>
 #include <net/if.h>
@@ -12,6 +13,13 @@
 
 #include "xdp-firewall.skel.h"  // Generated skeleton header
 #include "xdp-firewall.h"
+
+volatile sig_atomic_t stop = 0;
+
+void handle_sig(int sig)
+{
+    stop = 1;
+}
 
 // Callback function to handle events from the ring buffer
 static int handle_event(void *ctx, void *data, size_t data_sz)
@@ -61,25 +69,47 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
     return 0;
 }
 
+static void print_rule_info(int map_fd, const char *label)
+{
+    __u16 key, next_key;
+    int ret = bpf_map_get_next_key(map_fd, NULL, &next_key);
+
+    while (ret == 0){
+        struct drop_info print_entry;
+        if(bpf_map_lookup_elem(map_fd, &next_key, &print_entry) == 0){
+            printf("%s: %u, flag: %u, count: %u\n",label, next_key, print_entry.flag, print_entry.count);
+        }
+        key = next_key;
+        ret = bpf_map_get_next_key(map_fd, &key, &next_key);
+    }
+}
+
 int main(int argc, char **argv)
 {
     struct xdp_firewall_bpf *skel;
     struct ring_buffer *rb = NULL;
-    struct drop_info entry = {0};
+    struct drop_info src_entry = {0};
+    struct drop_info dst_entry = {0};
 
     int ifindex;
-    __u16 port;
+    __u16 src_port;
+    __u16 dst_port;
     int err;
 
-    if (argc != 3)
+    signal(SIGINT, handle_sig);
+    signal(SIGTERM, handle_sig);
+
+    if (argc != 4)
     {
-        fprintf(stderr, "Usage: %s <ifname> <port>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <ifname> <src_port> <dst_port>\n", argv[0]);
         return 1;
     }
 
     const char *ifname = argv[1];
-    port = atoi(argv[2]);
+    src_port = atoi(argv[2]);
+    dst_port = atoi(argv[3]);
     ifindex = if_nametoindex(ifname);
+
     if (ifindex == 0)
     {
         fprintf(stderr, "Invalid interface name %s\n", ifname);
@@ -105,9 +135,21 @@ int main(int argc, char **argv)
 
     printf("Successfully attached XDP program to interface %s\n", ifname);
 
-    entry.flag = 1;
-    entry.count = 0;
-    bpf_map_update_elem(bpf_map__fd(skel->maps.port_map), &port, &entry, 0);
+    
+    int ret1 = bpf_map_lookup_elem(bpf_map__fd(skel->maps.src_port_map), &src_port, &src_entry);
+    src_entry.flag = 1;
+    if (ret1 != 0){
+        src_entry.count = 0;
+    }
+    bpf_map_update_elem(bpf_map__fd(skel->maps.src_port_map), &src_port, &src_entry, BPF_ANY);
+
+    int ret2 = bpf_map_lookup_elem(bpf_map__fd(skel->maps.dst_port_map), &dst_port, &dst_entry);
+    dst_entry.flag = 1;
+    if (ret2 != 0){
+        dst_entry.count = 0;
+    }
+    bpf_map_update_elem(bpf_map__fd(skel->maps.dst_port_map), &dst_port, &dst_entry, BPF_ANY); 
+
 
     /* Set up ring buffer polling */
     rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
@@ -118,21 +160,25 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
+    
     printf("Start polling ring buffer\n");
 
     /* Poll the ring buffer */
-    while (1)
+    while (!stop)
     {
-        err = ring_buffer__poll(rb, -1);
+        err = ring_buffer__poll(rb, 100);
         if (err == -EINTR)
-            continue;
+            break;
         if (err < 0)
         {
             fprintf(stderr, "Error polling ring buffer: %d\n", err);
             break;
         }
     }
-
+    printf("\n---map_info---\n");
+    print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
+    print_rule_info(bpf_map__fd(skel->maps.dst_port_map), "Destination Port");
+    
 cleanup:
     ring_buffer__free(rb);
     xdp_firewall_bpf__destroy(skel);

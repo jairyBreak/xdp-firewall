@@ -13,10 +13,17 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 1);
+    __uint(max_entries, 1024);
     __type(key, __u16);
     __type(value, struct drop_info);
-} port_map SEC(".maps");
+} src_port_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, __u16);
+    __type(value, struct drop_info);
+} dst_port_map SEC(".maps");
 
 // Helper function to check if the packet is TCP
 static bool is_tcp(struct ethhdr *eth, void *data_end)
@@ -86,20 +93,40 @@ int xdp_pass(struct xdp_md *ctx)
     }
 
     __u16 src_port = bpf_ntohs(tcp->source);
-    struct drop_info *check = bpf_map_lookup_elem(&port_map, &src_port);
-    if(check){
-        check->count++;
-        if(check->flag == 1){
-            return XDP_DROP;
+    __u16 dst_port = bpf_ntohs(tcp->dest);
+    struct drop_info *src_check = bpf_map_lookup_elem(&src_port_map, &src_port);
+    struct drop_info *dst_check = bpf_map_lookup_elem(&dst_port_map, &dst_port);
+    int drop_flag = 0;
+    if(src_check){
+        src_check->count++;
+        if(src_check->flag == 1){
+            drop_flag = 1;
         }
     }
-    else if(!check){
-        struct drop_info entry = {0};
-        entry.flag = 0;
-        entry.count = 1;
-        bpf_map_update_elem(&port_map, &src_port, &entry, BPF_ANY);
+    else if(!src_check){
+        struct drop_info src_entry = {0};
+        src_entry.flag = 0;
+        src_entry.count = 1;
+        bpf_map_update_elem(&src_port_map, &src_port, &src_entry, BPF_ANY);
+    }
+    
+    if(dst_check){
+        dst_check->count++;
+        if(dst_check->flag == 1){
+            drop_flag = 1;
+        }
+    }
+    else if(!dst_check){
+        struct drop_info dst_entry = {0};
+        dst_entry.flag = 0;
+        dst_entry.count = 1;
+        bpf_map_update_elem(&dst_port_map, &dst_port, &dst_entry, BPF_ANY);
     }
 
+    if(drop_flag == 1){
+        return XDP_DROP;
+    }
+    
     // Reserve a fixed-size event because bpf_ringbuf_reserve requires a constant size
     struct tcp_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
     if (!event) {
