@@ -25,6 +25,14 @@ struct {
     __type(value, struct drop_info);
 } dst_port_map SEC(".maps");
 
+struct {
+        __uint(type, BPF_MAP_TYPE_LPM_TRIE);
+        __uint(max_entries, 1024);
+        __type(key, struct ipv4_lpm_key);
+        __type(value, struct drop_info);
+        __uint(map_flags, BPF_F_NO_PREALLOC);
+} ipv4_lpm_map SEC(".maps");
+
 // Helper function to check if the packet is TCP
 static bool is_tcp(struct ethhdr *eth, void *data_end)
 {
@@ -66,7 +74,7 @@ int xdp_pass(struct xdp_md *ctx)
 
     // Cast to IP header
     struct iphdr *ip = (struct iphdr *)(eth + 1);
-
+    
     // Calculate IP header length
     int ip_hdr_len = ip->ihl * 4;
     if (ip_hdr_len < sizeof(struct iphdr)) {
@@ -77,6 +85,7 @@ int xdp_pass(struct xdp_md *ctx)
     if ((void *)ip + ip_hdr_len > data_end) {
         return XDP_PASS;
     }
+
 
     // Parse TCP header
     struct tcphdr *tcp = (struct tcphdr *)((unsigned char *)ip + ip_hdr_len);
@@ -92,35 +101,57 @@ int xdp_pass(struct xdp_md *ctx)
         return XDP_PASS;
     }
 
+    __u32 src_ip = ip->saddr;
     __u16 src_port = bpf_ntohs(tcp->source);
     __u16 dst_port = bpf_ntohs(tcp->dest);
+
+    struct ipv4_lpm_key ip_key;
+    ip_key.prefixlen = 32;
+    ip_key.addr = src_ip;
+
+    struct drop_info *ip_check = bpf_map_lookup_elem(&ipv4_lpm_map, &ip_key);
     struct drop_info *src_check = bpf_map_lookup_elem(&src_port_map, &src_port);
     struct drop_info *dst_check = bpf_map_lookup_elem(&dst_port_map, &dst_port);
+
     int drop_flag = 0;
-    if(src_check){
-        src_check->count++;
-        if(src_check->flag == 1){
+    if(ip_check){
+        ip_check->count++;
+        if(ip_check->flag == 1){
             drop_flag = 1;
+        } 
+    }
+    else if(!ip_check){
+        struct drop_info ip_entry = {0};
+        ip_entry.flag = 0;
+        ip_entry.count = 1;
+        bpf_map_update_elem(&ipv4_lpm_map, &ip_key, &ip_entry, BPF_ANY);
+    }
+    if (!drop_flag){
+        if(src_check){
+            src_check->count++;
+            if(src_check->flag == 1){
+                drop_flag = 1;
+            }
         }
-    }
-    else if(!src_check){
-        struct drop_info src_entry = {0};
-        src_entry.flag = 0;
-        src_entry.count = 1;
-        bpf_map_update_elem(&src_port_map, &src_port, &src_entry, BPF_ANY);
-    }
-    
-    if(dst_check){
-        dst_check->count++;
-        if(dst_check->flag == 1){
-            drop_flag = 1;
+        else if(!src_check){
+            struct drop_info src_entry = {0};
+            src_entry.flag = 0;
+            src_entry.count = 1;
+            bpf_map_update_elem(&src_port_map, &src_port, &src_entry, BPF_ANY);
         }
-    }
-    else if(!dst_check){
-        struct drop_info dst_entry = {0};
-        dst_entry.flag = 0;
-        dst_entry.count = 1;
-        bpf_map_update_elem(&dst_port_map, &dst_port, &dst_entry, BPF_ANY);
+        
+        if(dst_check){
+            dst_check->count++;
+            if(dst_check->flag == 1){
+                drop_flag = 1;
+            }
+        }
+        else if(!dst_check){
+            struct drop_info dst_entry = {0};
+            dst_entry.flag = 0;
+            dst_entry.count = 1;
+            bpf_map_update_elem(&dst_port_map, &dst_port, &dst_entry, BPF_ANY);
+        }
     }
 
     if(drop_flag == 1){

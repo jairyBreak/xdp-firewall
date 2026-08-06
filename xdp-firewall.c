@@ -69,6 +69,26 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
     return 0;
 }
 
+static int parse_ip_address(const char *ip_str, __u32 *ip_addr, __u32 *prefixlen){
+    char ip_copy[16];
+    __u32 prefixlen_local = 32;
+
+    if(sscanf(ip_str, "%15[^/]/%u", ip_copy, &prefixlen_local) < 1){
+        fprintf(stderr, "Invalid CIDR: %s\n", ip_str);
+        return -1;
+    }
+    
+    struct in_addr addr;
+    if (inet_pton(AF_INET, ip_copy, &addr.s_addr) != 1) {
+        fprintf(stderr, "Invalid IP: %s\n", ip_str);
+        return -1;
+    }
+
+    *ip_addr = addr.s_addr;
+    *prefixlen = prefixlen_local;
+    return 0;
+}
+
 static void print_rule_info(int map_fd, const char *label)
 {
     __u16 key, next_key;
@@ -78,6 +98,26 @@ static void print_rule_info(int map_fd, const char *label)
         struct drop_info print_entry;
         if(bpf_map_lookup_elem(map_fd, &next_key, &print_entry) == 0){
             printf("%s: %u, flag: %u, count: %u\n",label, next_key, print_entry.flag, print_entry.count);
+        }
+        key = next_key;
+        ret = bpf_map_get_next_key(map_fd, &key, &next_key);
+    }
+}
+
+static void print_ip_info(int map_fd, const char *label)
+{
+    struct ipv4_lpm_key key, next_key;
+    int ret = bpf_map_get_next_key(map_fd, NULL, &next_key);
+
+    while (ret == 0){
+        struct drop_info print_entry;
+        if (bpf_map_lookup_elem(map_fd, &next_key, &print_entry) == 0){
+            char ip_str[INET_ADDRSTRLEN];
+            if (inet_ntop(AF_INET, &next_key.addr, ip_str, sizeof(ip_str)) != NULL) {
+                printf("%s: %s/%u, flag: %u, count: %u\n",
+                       label, ip_str, next_key.prefixlen,
+                       print_entry.flag, print_entry.count);
+            }
         }
         key = next_key;
         ret = bpf_map_get_next_key(map_fd, &key, &next_key);
@@ -95,6 +135,18 @@ static void set_rule(int map_fd, __u16 port, __u8 flag)
     bpf_map_update_elem(map_fd, &port, &entry, BPF_ANY);
 }
 
+static void set_ip_rule(int map_fd, struct ipv4_lpm_key ip_key, __u8 flag)
+{
+    struct drop_info entry = {0};
+    int ret1 = bpf_map_lookup_elem(map_fd, &ip_key, &entry);
+    entry.flag = flag;
+    if (ret1 != 0){
+        entry.count = 0;
+    }
+    bpf_map_update_elem(map_fd, &ip_key, &entry, BPF_ANY);
+}
+
+
 int main(int argc, char **argv)
 {
     struct xdp_firewall_bpf *skel;
@@ -103,17 +155,24 @@ int main(int argc, char **argv)
     int ifindex;
     __u16 src_port[MAX_PORTS];
     __u16 dst_port[MAX_PORTS];
+    struct ipv4_lpm_key ip_key[MAX_PORTS];
+
     int err;
     int i = 1;
     int src_count = 0;
     int dst_count = 0;
+    int ip_count = 0;
     const char *ifname = NULL;
 
     signal(SIGINT, handle_sig);
     signal(SIGTERM, handle_sig);
 
     while (i < argc){
-        if (strcmp(argv[i], "-sp") == 0){
+        if (ifname == NULL){
+            ifname = argv[i];
+            i++;
+        }
+        else if (strcmp(argv[i], "-sp") == 0){
             i++;
             while (i < argc && argv[i][0] != '-'){
                 if(src_count >= MAX_PORTS){
@@ -135,9 +194,20 @@ int main(int argc, char **argv)
                 i++;
             }
         }
-        else if (ifname == NULL){
-            ifname = argv[i];
+        else if(strcmp(argv[i], "-ip") == 0){
             i++;
+            while (i < argc && argv[i][0] != '-'){
+                if(ip_count >= MAX_PORTS){
+                    fprintf(stderr, "too many IP rule\n");
+                    return 1;
+                }
+                struct ipv4_lpm_key ip_entry;
+                if(parse_ip_address(argv[i], &ip_entry.addr, &ip_entry.prefixlen) != 0){
+                    return 1;
+                }
+                ip_key[ip_count++] = ip_entry;
+                i++;
+            }
         }
         else{
             fprintf(stderr, "Invalid argument: %s\n", argv[i]);
@@ -184,6 +254,10 @@ int main(int argc, char **argv)
     for (int k = 0; k < dst_count; k++){
         set_rule(bpf_map__fd(skel->maps.dst_port_map), dst_port[k], 1);
     }
+    
+    for (int l = 0; l < ip_count; l++){
+        set_ip_rule(bpf_map__fd(skel->maps.ipv4_lpm_map), ip_key[l], 1);
+    }
 
     /* Set up ring buffer polling */
     rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
@@ -209,10 +283,13 @@ int main(int argc, char **argv)
             break;
         }
     }
+
     printf("\n---map_info---\n");
+    print_ip_info(bpf_map__fd(skel->maps.ipv4_lpm_map), "IP Rule");
     print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
     print_rule_info(bpf_map__fd(skel->maps.dst_port_map), "Destination Port");
     
+
 cleanup:
     ring_buffer__free(rb);
     xdp_firewall_bpf__destroy(skel);

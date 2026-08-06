@@ -8,6 +8,11 @@ struct tcp_event {
     unsigned char header[MAX_TCP_HEADER_BYTES];
 };
 
+struct ipv4_lpm_key {
+        __u32 prefixlen;
+        __u32 addr;
+};
+
 struct drop_info {
     __u8 flag;
     __u32 count;
