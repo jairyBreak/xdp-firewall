@@ -84,30 +84,72 @@ static void print_rule_info(int map_fd, const char *label)
     }
 }
 
+static void set_rule(int map_fd, __u16 port, __u8 flag)
+{   
+    struct drop_info entry = {0};
+    int ret1 = bpf_map_lookup_elem(map_fd, &port, &entry);
+    entry.flag = flag;
+    if (ret1 != 0){
+        entry.count = 0;
+    }
+    bpf_map_update_elem(map_fd, &port, &entry, BPF_ANY);
+}
+
 int main(int argc, char **argv)
 {
     struct xdp_firewall_bpf *skel;
     struct ring_buffer *rb = NULL;
-    struct drop_info src_entry = {0};
-    struct drop_info dst_entry = {0};
 
     int ifindex;
-    __u16 src_port;
-    __u16 dst_port;
+    __u16 src_port[MAX_PORTS];
+    __u16 dst_port[MAX_PORTS];
     int err;
+    int i = 1;
+    int src_count = 0;
+    int dst_count = 0;
+    const char *ifname = NULL;
 
     signal(SIGINT, handle_sig);
     signal(SIGTERM, handle_sig);
 
-    if (argc != 4)
-    {
-        fprintf(stderr, "Usage: %s <ifname> <src_port> <dst_port>\n", argv[0]);
+    while (i < argc){
+        if (strcmp(argv[i], "-sp") == 0){
+            i++;
+            while (i < argc && argv[i][0] != '-'){
+                if(src_count >= MAX_PORTS){
+                    fprintf(stderr, "too many port\n");
+                    return 1;
+                }
+                src_port[src_count++] = (__u16)atoi(argv[i]);
+                i++;
+            }
+        }
+        else if(strcmp(argv[i], "-dp") == 0){
+            i++;
+            while (i < argc && argv[i][0] != '-'){
+                if(dst_count >= MAX_PORTS){
+                    fprintf(stderr, "too many port\n");
+                    return 1;
+                }
+                dst_port[dst_count++] = (__u16)atoi(argv[i]);
+                i++;
+            }
+        }
+        else if (ifname == NULL){
+            ifname = argv[i];
+            i++;
+        }
+        else{
+            fprintf(stderr, "Invalid argument: %s\n", argv[i]);
+            return 1;
+        }
+    }
+
+    if (ifname == NULL) {
+        fprintf(stderr, "Usage: %s <ifname> [-sp <port>...] [-dp <port>...]\n", argv[0]);
         return 1;
     }
 
-    const char *ifname = argv[1];
-    src_port = atoi(argv[2]);
-    dst_port = atoi(argv[3]);
     ifindex = if_nametoindex(ifname);
 
     if (ifindex == 0)
@@ -135,21 +177,13 @@ int main(int argc, char **argv)
 
     printf("Successfully attached XDP program to interface %s\n", ifname);
 
-    
-    int ret1 = bpf_map_lookup_elem(bpf_map__fd(skel->maps.src_port_map), &src_port, &src_entry);
-    src_entry.flag = 1;
-    if (ret1 != 0){
-        src_entry.count = 0;
+    for (int j = 0; j < src_count; j++){
+        set_rule(bpf_map__fd(skel->maps.src_port_map), src_port[j], 1);
     }
-    bpf_map_update_elem(bpf_map__fd(skel->maps.src_port_map), &src_port, &src_entry, BPF_ANY);
 
-    int ret2 = bpf_map_lookup_elem(bpf_map__fd(skel->maps.dst_port_map), &dst_port, &dst_entry);
-    dst_entry.flag = 1;
-    if (ret2 != 0){
-        dst_entry.count = 0;
+    for (int k = 0; k < dst_count; k++){
+        set_rule(bpf_map__fd(skel->maps.dst_port_map), dst_port[k], 1);
     }
-    bpf_map_update_elem(bpf_map__fd(skel->maps.dst_port_map), &dst_port, &dst_entry, BPF_ANY); 
-
 
     /* Set up ring buffer polling */
     rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);

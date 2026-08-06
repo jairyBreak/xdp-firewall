@@ -1,5 +1,9 @@
 # XDP-firewall
 
+A stateless packet-filtering firewall prototype built on XDP/eBPF, 
+designed to explore whether XDP's in-driver packet processing can 
+outperform traditional iptables-based filtering
+
 base on [bpf-developer-tutorial/41-xdp-tcpdump](https://github.com/eunomia-bpf/bpf-developer-tutorial/tree/main/src/41-xdp-tcpdump)
 
 ```bash
@@ -27,13 +31,13 @@ wlp0s20f3: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
 Run the user-space program with the desired network interface and blocked tcp source and destination port:
 
 ```bash
-sudo ./xdp-tcpdump wlp0s20f3 <src_port> <dst_port>
+sudo ./xdp-tcpdump wlp0s20f3 [-sp <port>...] [-dp <port>...]
 ```
 
 Sample Output:
 
 ```bash
-user@host:~/xdp-firewall$ sudo ./xdp-firewall wlp0s20f3 443 47290
+user@host:~/xdp-firewall$ sudo ./xdp-firewall wlp0s20f3 -sp 443 -dp 47290
 Successfully attached XDP program to interface wlp0s20f3
 Start polling ring buffer
 Captured TCP Header:
