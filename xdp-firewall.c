@@ -97,7 +97,9 @@ static void print_rule_info(int map_fd, const char *label)
     while (ret == 0){
         struct drop_info print_entry;
         if(bpf_map_lookup_elem(map_fd, &next_key, &print_entry) == 0){
-            printf("%s: %u, flag: %u, count: %u\n",label, next_key, print_entry.flag, print_entry.count);
+            if (print_entry.flag == 1) {
+                printf("%s: %u, flag: %u, count: %u\n",label, next_key, print_entry.flag, print_entry.count);
+            }
         }
         key = next_key;
         ret = bpf_map_get_next_key(map_fd, &key, &next_key);
@@ -286,7 +288,7 @@ int main(int argc, char **argv)
 
     printf("\n---map_info---\n");
     print_ip_info(bpf_map__fd(skel->maps.ipv4_lpm_map), "IP Rule");
-    print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
+    //print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
     print_rule_info(bpf_map__fd(skel->maps.dst_port_map), "Destination Port");
     
 

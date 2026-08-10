@@ -157,7 +157,8 @@ int xdp_pass(struct xdp_md *ctx)
     if(drop_flag == 1){
         return XDP_DROP;
     }
-    
+    /*
+    print_ringbuffer_part
     // Reserve a fixed-size event because bpf_ringbuf_reserve requires a constant size
     struct tcp_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
     if (!event) {
@@ -188,7 +189,7 @@ int xdp_pass(struct xdp_md *ctx)
 
     // Optional: Print a debug message (will appear in kernel logs)
     bpf_printk("Captured TCP header (%u bytes)", tcp_header_bytes);
-
+    */
     return XDP_PASS;
 }
 

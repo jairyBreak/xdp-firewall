@@ -1,3 +1,4 @@
 .output/
 xdp-firewall
 vmlinux.h
+*.log

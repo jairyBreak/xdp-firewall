@@ -2,7 +2,7 @@
 #define XDP_FIREWALL_H_
 
 #define MAX_TCP_HEADER_BYTES 60
-#define MAX_PORTS 128
+#define MAX_PORTS 1024
 struct tcp_event {
     unsigned int header_len;
     unsigned char header[MAX_TCP_HEADER_BYTES];
