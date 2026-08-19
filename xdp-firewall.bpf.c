@@ -3,7 +3,6 @@
 #include <bpf/bpf_endian.h>
 #include "xdp-firewall.h"
 
-#define ETH_P_IP 0x0800
 
 // Define the ring buffer map
 struct {
@@ -24,6 +23,13 @@ struct {
     __type(key, __u16);
     __type(value, struct drop_info);
 } dst_port_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 2048);
+    __type(key, __u32);
+    __type(value, struct t_bucket);
+} bucket_map SEC(".maps");
 
 struct {
         __uint(type, BPF_MAP_TYPE_LPM_TRIE);
@@ -55,6 +61,29 @@ static bool is_tcp(struct ethhdr *eth, void *data_end)
         return false;
 
     return true;
+}
+
+static int consume_bucket(struct t_bucket *b){
+    int result;
+    __u64 current_time = bpf_ktime_get_ns(); 
+
+    bpf_spin_lock(&b->lock);
+    __u64 elapsed_time = current_time - b->last_fill_time;
+    b->last_fill_time = current_time;
+
+    b->token += elapsed_time / 1000000 * REFILL_RATE;
+    if(b->token > CAPACITY){
+        b->token = CAPACITY;
+    }
+    if(b->token >= 1){
+        b->token -= 1;
+        result = 0;
+    }
+    else{
+        result = -1;
+    }
+    bpf_spin_unlock(&b->lock);
+    return result;
 }
 
 SEC("xdp")
@@ -152,6 +181,22 @@ int xdp_pass(struct xdp_md *ctx)
             dst_entry.count = 1;
             bpf_map_update_elem(&dst_port_map, &dst_port, &dst_entry, BPF_ANY);
         }
+    }
+
+    struct t_bucket *ip_bucket = bpf_map_lookup_elem(&bucket_map,&src_ip);
+    if (ip_bucket){
+        int consume = consume_bucket(ip_bucket);
+        //bpf_printk("TB: ip=%x consume=%d token=%llu", src_ip, consume, ip_bucket->token);
+
+        if(consume < 0){
+            drop_flag = 1;
+        }
+    }
+    else{
+        struct t_bucket new_bucket = {0};
+        new_bucket.token = CAPACITY - 1;
+        new_bucket.last_fill_time = bpf_ktime_get_ns();
+        bpf_map_update_elem(&bucket_map, &src_ip, &new_bucket, BPF_ANY);
     }
 
     if(drop_flag == 1){
