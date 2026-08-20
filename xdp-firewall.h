@@ -24,7 +24,8 @@ struct drop_info {
 
 struct t_bucket {
     __u64 token;
-    __u64 last_fill_time; 
+    __u64 last_fill_time;
+    __u64 drop_count; 
     struct bpf_spin_lock lock;
 };
 #endif /* XDP_FIREWALL_H_ */

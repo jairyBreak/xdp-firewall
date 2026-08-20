@@ -71,7 +71,7 @@ static int consume_bucket(struct t_bucket *b){
     __u64 elapsed_time = current_time - b->last_fill_time;
     b->last_fill_time = current_time;
 
-    b->token += elapsed_time / 1000000 * REFILL_RATE;
+    b->token += elapsed_time * REFILL_RATE / 50000;
     if(b->token > CAPACITY){
         b->token = CAPACITY;
     }
@@ -80,8 +80,10 @@ static int consume_bucket(struct t_bucket *b){
         result = 0;
     }
     else{
+        b->drop_count += 1;
         result = -1;
     }
+
     bpf_spin_unlock(&b->lock);
     return result;
 }
@@ -196,6 +198,7 @@ int xdp_pass(struct xdp_md *ctx)
         struct t_bucket new_bucket = {0};
         new_bucket.token = CAPACITY - 1;
         new_bucket.last_fill_time = bpf_ktime_get_ns();
+        new_bucket.drop_count = 0;
         bpf_map_update_elem(&bucket_map, &src_ip, &new_bucket, BPF_ANY);
     }
 

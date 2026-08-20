@@ -126,6 +126,24 @@ static void print_ip_info(int map_fd, const char *label)
     }
 }
 
+static void print_bucket_info(int map_fd)
+{
+    __u32 key, next_key;
+    int ret = bpf_map_get_next_key(map_fd, NULL, &next_key);
+
+    while (ret == 0) {
+        struct t_bucket b;
+        if (bpf_map_lookup_elem(map_fd, &next_key, &b) == 0) {
+            struct in_addr addr;
+            addr.s_addr = next_key; 
+            printf("IP %s: token=%llu, dropped=%llu\n",
+                   inet_ntoa(addr), b.token, b.drop_count);
+        }
+        key = next_key;
+        ret = bpf_map_get_next_key(map_fd, &key, &next_key);
+    }
+}
+
 static void set_rule(int map_fd, __u16 port, __u8 flag)
 {   
     struct drop_info entry = {0};
@@ -290,7 +308,8 @@ int main(int argc, char **argv)
     print_ip_info(bpf_map__fd(skel->maps.ipv4_lpm_map), "IP Rule");
     //print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
     print_rule_info(bpf_map__fd(skel->maps.dst_port_map), "Destination Port");
-    
+    printf("---bucket drop info---\n");
+    print_bucket_info(bpf_map__fd(skel->maps.bucket_map));
 
 cleanup:
     ring_buffer__free(rb);
