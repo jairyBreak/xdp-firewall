@@ -20,14 +20,14 @@ struct {
 
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 1024);
     __type(key, __u16);
     __type(value, struct drop_info);
 } src_port_map SEC(".maps");
 
 struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
     __uint(max_entries, 1024);
     __type(key, __u16);
     __type(value, struct drop_info);
