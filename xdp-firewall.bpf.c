@@ -3,12 +3,21 @@
 #include <bpf/bpf_endian.h>
 #include "xdp-firewall.h"
 
+volatile __u8 verbose_enabled = 0;
 
 // Define the ring buffer map
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 1 << 24);  // 16 MB buffer
 } rb SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, struct rate_config);
+} rate_map SEC(".maps");
+
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -65,15 +74,24 @@ static bool is_tcp(struct ethhdr *eth, void *data_end)
 
 static int consume_bucket(struct t_bucket *b){
     int result;
+    __u16 key = 0;
+    __u64 refill_rate, capacity;
+    struct rate_config *conf = bpf_map_lookup_elem(&rate_map, &key);
+
+    if(!conf){
+        return 0;
+    }
+    refill_rate = conf->refill_rate;
+    capacity = conf->capacity;
     __u64 current_time = bpf_ktime_get_ns(); 
 
     bpf_spin_lock(&b->lock);
     __u64 elapsed_time = current_time - b->last_fill_time;
     b->last_fill_time = current_time;
 
-    b->token += elapsed_time * REFILL_RATE / 50000;
-    if(b->token > CAPACITY){
-        b->token = CAPACITY;
+    b->token += elapsed_time * refill_rate / 1000000ULL;
+    if(b->token > capacity){
+        b->token = capacity;
     }
     if(b->token >= 1){
         b->token -= 1;
@@ -196,7 +214,9 @@ int xdp_pass(struct xdp_md *ctx)
     }
     else{
         struct t_bucket new_bucket = {0};
-        new_bucket.token = CAPACITY - 1;
+        __u32 key = 0;
+        struct rate_config *conf = bpf_map_lookup_elem(&rate_map, &key);
+        new_bucket.token = conf->capacity - 1;
         new_bucket.last_fill_time = bpf_ktime_get_ns();
         new_bucket.drop_count = 0;
         bpf_map_update_elem(&bucket_map, &src_ip, &new_bucket, BPF_ANY);
@@ -205,39 +225,39 @@ int xdp_pass(struct xdp_md *ctx)
     if(drop_flag == 1){
         return XDP_DROP;
     }
-    /*
-    print_ringbuffer_part
-    // Reserve a fixed-size event because bpf_ringbuf_reserve requires a constant size
-    struct tcp_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
-    if (!event) {
-        return XDP_PASS;  // If reservation fails, skip processing
-    }
-
-    event->header_len = tcp_header_bytes;
-    __builtin_memset(event->header, 0, sizeof(event->header));
-
-    // Copy the TCP header bytes into the ring buffer
-    // Using a loop to ensure compliance with eBPF verifier
-    for (int i = 0; i < MAX_TCP_HEADER_BYTES; i++) {
-        if (i >= tcp_header_bytes)
-            break;
-
-        if ((void *)tcp + i + 1 > data_end) {
-            bpf_ringbuf_discard(event, 0);
-            return XDP_PASS;
+    
+    if (verbose_enabled){
+        // Reserve a fixed-size event because bpf_ringbuf_reserve requires a constant size
+        struct tcp_event *event = bpf_ringbuf_reserve(&rb, sizeof(*event), 0);
+        if (!event) {
+            return XDP_PASS;  // If reservation fails, skip processing
         }
 
-        // Accessing each byte safely within bounds
-        unsigned char byte = *((unsigned char *)tcp + i);
-        event->header[i] = byte;
+        event->header_len = tcp_header_bytes;
+        __builtin_memset(event->header, 0, sizeof(event->header));
+
+        // Copy the TCP header bytes into the ring buffer
+        // Using a loop to ensure compliance with eBPF verifier
+        for (int i = 0; i < MAX_TCP_HEADER_BYTES; i++) {
+            if (i >= tcp_header_bytes)
+                break;
+
+            if ((void *)tcp + i + 1 > data_end) {
+                bpf_ringbuf_discard(event, 0);
+                return XDP_PASS;
+            }
+
+            // Accessing each byte safely within bounds
+            unsigned char byte = *((unsigned char *)tcp + i);
+            event->header[i] = byte;
+        }
+
+        // Submit the data to the ring buffer
+        bpf_ringbuf_submit(event, 0);
     }
-
-    // Submit the data to the ring buffer
-    bpf_ringbuf_submit(event, 0);
-
     // Optional: Print a debug message (will appear in kernel logs)
-    bpf_printk("Captured TCP header (%u bytes)", tcp_header_bytes);
-    */
+    //bpf_printk("Captured TCP header (%u bytes)", tcp_header_bytes);
+    
     return XDP_PASS;
 }
 

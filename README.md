@@ -7,7 +7,26 @@ outperform traditional iptables-based filtering
 (work in progress)
 
 base on [bpf-developer-tutorial/41-xdp-tcpdump](https://github.com/eunomia-bpf/bpf-developer-tutorial/tree/main/src/41-xdp-tcpdump)
-### Compile
+
+## Features
+
+### Packet Filtering
+- **TCP source/destination port filtering** — exact-match hash map lookup, supports blocking by source port, destination port, or both
+- **IP address filtering** — supports both exact-match blocking and CIDR range blocking via LPM trie (`BPF_MAP_TYPE_LPM_TRIE`)
+- Multiple rules can be specified at startup (e.g. `-sp 443 8080 -dp 22 -ip 10.0.0.0/24`)
+- Per-rule traffic statistics (hit count) tracked for every port/IP rule
+
+### Rate Limiting (Token Bucket)
+- Per-source-IP rate limiting using a token bucket algorithm
+- Configurable at startup via `-rate` (tokens refilled per millisecond) and `-cap` (bucket capacity)
+- Per-IP drop counters track how many packets were rejected due to rate limiting
+
+### Observability
+- Ring-buffer-based packet capture for inspecting live traffic (toggleable via `-verbose`)
+- End-of-run statistics summary for all rule types (port rules, IP rules, rate-limit buckets)
+
+## Compilation and Execution Instructions
+### Building the Program
 ```bash
 cd xdp-firewall
 make
@@ -33,7 +52,7 @@ wlp0s20f3: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
 Run the user-space program with the desired network interface and blocked IP address, tcp source and destination port:
 
 ```bash
-sudo ./xdp-firewall wlp0s20f3 [-ip <X.X.X.X/prefixlen>...] [-sp <port>...] [-dp <port>...]
+sudo ./xdp-firewall wlp0s20f3 [-ip <X.X.X.X/prefixlen>...] [-sp <port>...] [-dp <port>...] [-rate <refill_rate> (packet per ms)] [-cap <max capacity>] [-verbose]
 ```
 
 Sample Output:
@@ -42,27 +61,30 @@ Sample Output:
 user@host:~/xdp-firewall$ sudo ./xdp-firewall wlp0s20f3 -sp 443 -dp 47290
 Successfully attached XDP program to interface wlp0s20f3
 Start polling ring buffer
+
+# if accept the verbose
 Captured TCP Header:
-  Source Port: 80
-  Destination Port: 35720
-  Sequence Number: 2199134217
-  Acknowledgment Number: 1709720450
-  Data Offset: 8
-  Flags: 0x18
-  Window Size: 75
+  Source Port: 1717
+  Destination Port: 12345
+  Sequence Number: 1637944930
+  Acknowledgment Number: 1335303973
+  Data Offset: 5
+  Flags: 0x02
+  Window Size: 512
 ```
 
 Sample Output in termination of program: rule execution statistics collected from BPF Maps (flag: 1 indicates dropped rule, count indicates matched packets):
 ```bash
 ---map_info---
-IP Rule: 20.50.80.215/32, flag: 0, count: 7
-IP Rule: 20.184.175.22/32, flag: 0, count: 11
-IP Rule: 162.159.135.0/24, flag: 1, count: 5
-IP Rule: 199.165.136.100/32, flag: 0, count: 1
-Source Port: 443, flag: 0, count: 19
-Destination Port: 42146, flag: 0, count: 11
-Destination Port: 60092, flag: 0, count: 1
-Destination Port: 35934, flag: 0, count: 7
+IP Rule: 10.0.0.2/32, flag: 0, count: 5
+Source Port: 1717, flag: 0, count: 1
+Source Port: 1715, flag: 0, count: 1
+Source Port: 1718, flag: 0, count: 1
+Source Port: 1714, flag: 0, count: 1
+Source Port: 1716, flag: 0, count: 1
+Destination Port: 12345, flag: 1, count: 5
+---bucket drop info---
+IP 10.0.0.2: token=499, dropped=0
 ```
 
 # Benchmark: XDP vs iptables — Rule Count Scaling

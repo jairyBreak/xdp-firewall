@@ -97,9 +97,7 @@ static void print_rule_info(int map_fd, const char *label)
     while (ret == 0){
         struct drop_info print_entry;
         if(bpf_map_lookup_elem(map_fd, &next_key, &print_entry) == 0){
-            if (print_entry.flag == 1) {
-                printf("%s: %u, flag: %u, count: %u\n",label, next_key, print_entry.flag, print_entry.count);
-            }
+            printf("%s: %u, flag: %u, count: %u\n",label, next_key, print_entry.flag, print_entry.count);
         }
         key = next_key;
         ret = bpf_map_get_next_key(map_fd, &key, &next_key);
@@ -179,9 +177,15 @@ int main(int argc, char **argv)
 
     int err;
     int i = 1;
+    __u32 key = 0;
     int src_count = 0;
     int dst_count = 0;
     int ip_count = 0;
+    __u16 verbose_flag = 0;
+    struct rate_config conf;
+    conf.refill_rate = DEFAULT_REFILL_RATE;
+    conf.capacity = DEFAULT_CAPACITY;
+
     const char *ifname = NULL;
 
     signal(SIGINT, handle_sig);
@@ -229,6 +233,28 @@ int main(int argc, char **argv)
                 i++;
             }
         }
+        else if(strcmp(argv[i], "-rate") == 0){
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "-rate requires a value\n");
+                return 1;
+            }
+            conf.refill_rate = atoi(argv[i]);
+            i++;
+        }
+        else if(strcmp(argv[i], "-cap") == 0){
+            i++;
+            if (i >= argc) {
+                fprintf(stderr, "-cap requires a value\n");
+                return 1;
+            }
+            conf.capacity = atoi(argv[i]);
+            i++;
+        }
+        else if(strcmp(argv[i], "-verbose") == 0){
+            verbose_flag = 1;
+            i++;
+        }
         else{
             fprintf(stderr, "Invalid argument: %s\n", argv[i]);
             return 1;
@@ -256,6 +282,9 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    bpf_map_update_elem(bpf_map__fd(skel->maps.rate_map), &key, &conf, BPF_ANY);
+    skel->bss->verbose_enabled = verbose_flag ? 1 : 0;
+
     /* Attach the XDP program to the specified interface */
     skel->links.xdp_pass = bpf_program__attach_xdp(skel->progs.xdp_pass, ifindex);
     if (!skel->links.xdp_pass)
@@ -266,6 +295,7 @@ int main(int argc, char **argv)
     }
 
     printf("Successfully attached XDP program to interface %s\n", ifname);
+
 
     for (int j = 0; j < src_count; j++){
         set_rule(bpf_map__fd(skel->maps.src_port_map), src_port[j], 1);
@@ -290,7 +320,6 @@ int main(int argc, char **argv)
 
     
     printf("Start polling ring buffer\n");
-
     /* Poll the ring buffer */
     while (!stop)
     {
@@ -303,10 +332,10 @@ int main(int argc, char **argv)
             break;
         }
     }
-
+    
     printf("\n---map_info---\n");
     print_ip_info(bpf_map__fd(skel->maps.ipv4_lpm_map), "IP Rule");
-    //print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
+    print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
     print_rule_info(bpf_map__fd(skel->maps.dst_port_map), "Destination Port");
     printf("---bucket drop info---\n");
     print_bucket_info(bpf_map__fd(skel->maps.bucket_map));
