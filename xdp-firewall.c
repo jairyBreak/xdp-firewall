@@ -123,23 +123,40 @@ static void print_rule_info(int map_fd, const char *label)
 }
 
 static void print_ip_info(int map_fd, const char *label)
-{
-    struct ipv4_lpm_key key, next_key;
+{   
+    int num_cpus = libbpf_num_possible_cpus();
+    __u32 key, next_key;
     int ret = bpf_map_get_next_key(map_fd, NULL, &next_key);
 
+    if (num_cpus <= 0) {
+        fprintf(stderr, "Failed to get possible CPU count\n");
+        return;
+    }
+    
+    size_t elem_size = sizeof(struct drop_info);
+    __u64 *print_entry = calloc(num_cpus, elem_size);
+    if (!print_entry) {
+        fprintf(stderr, "calloc failed\n");
+        return;
+    }
+
+    
     while (ret == 0){
-        struct drop_info print_entry;
-        if (bpf_map_lookup_elem(map_fd, &next_key, &print_entry) == 0){
+        __u64 entry_sum = 0;
+        if (bpf_map_lookup_elem(map_fd, &next_key, print_entry) == 0){
             char ip_str[INET_ADDRSTRLEN];
-            if (inet_ntop(AF_INET, &next_key.addr, ip_str, sizeof(ip_str)) != NULL) {
-                printf("%s: %s/%u, flag: %u, count: %u\n",
-                       label, ip_str, next_key.prefixlen,
-                       print_entry.flag, print_entry.count);
+            for(int i = 0;i < num_cpus;i++){
+                entry_sum += print_entry[i];
+            }
+            if (inet_ntop(AF_INET, &next_key, ip_str, sizeof(ip_str)) != NULL) {
+                printf("%s: %s, count: %llu\n", label, ip_str, entry_sum);
             }
         }
         key = next_key;
         ret = bpf_map_get_next_key(map_fd, &key, &next_key);
     }
+
+    free(print_entry);
 }
 
 static void print_bucket_info(int map_fd)
@@ -190,12 +207,7 @@ static void set_rule(int map_fd, __u16 port, __u8 flag)
 
 static void set_ip_rule(int map_fd, struct ipv4_lpm_key ip_key, __u8 flag)
 {
-    struct drop_info entry = {0};
-    int ret1 = bpf_map_lookup_elem(map_fd, &ip_key, &entry);
-    entry.flag = flag;
-    if (ret1 != 0){
-        entry.count = 0;
-    }
+    __u8 entry = flag;
     bpf_map_update_elem(map_fd, &ip_key, &entry, BPF_ANY);
 }
 
@@ -369,7 +381,7 @@ int main(int argc, char **argv)
     }
     
     printf("\n---map_info---\n");
-    print_ip_info(bpf_map__fd(skel->maps.ipv4_lpm_map), "IP Rule");
+    print_ip_info(bpf_map__fd(skel->maps.ip_count_map), "IP Rule");
     //print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
     print_rule_info(bpf_map__fd(skel->maps.dst_port_map), "Destination Port");
     printf("---bucket drop info---\n");
