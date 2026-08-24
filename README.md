@@ -13,7 +13,7 @@ base on [bpf-developer-tutorial/41-xdp-tcpdump](https://github.com/eunomia-bpf/b
 ### Packet Filtering
 - **TCP source/destination port filtering** — exact-match hash map lookup, supports blocking by source port, destination port, or both
 - **IP address filtering** — supports both exact-match blocking and CIDR range blocking via LPM trie (`BPF_MAP_TYPE_LPM_TRIE`)
-- Multiple rules can be specified at startup (e.g. `-sp 443 8080 -dp 22 -ip 10.0.0.0/24`)
+- Multiple rules can be specified at startup (e.g. `-sp 443 8080 -dp 22 -ip 10.0.0.0/24`) and dynamically now (see [Here](#dynamic-rule-management-xdp-firewall-cli))
 - Per-rule traffic statistics (hit count) tracked for every port/IP rule
 
 ### Rate Limiting (Token Bucket)
@@ -87,7 +87,58 @@ Destination Port: 12345, flag: 1, count: 5
 IP 10.0.0.2: token=499, dropped=0
 ```
 
+## Dynamic Rule Management (`xdp-firewall-cli`)
+
+While `xdp-firewall` accepts rules at startup via command-line flags, rules
+can also be added or inspected **while the program is running**, without
+restarting it. This is done through a separate, independent tool:
+`xdp-firewall-cli`.
+
+
+### Starting the CLI
+
+Make sure `xdp-firewall` is already running (it creates the pinned maps
+on startup), then in a separate terminal:
+
+```bash
+sudo ./xdp-firewall-cli
+```
+
+### Available commands
+
+| Command | Description |
+|---|---|
+| `block dst-port <port>` | Block a destination port |
+| `block src-port <port>` | Block a source port |
+| `block ip <cidr>` | Block an IP address or CIDR range (e.g. `10.0.0.0/24`) |
+| `status` | Show all current rules and their hit counts |
+| `unpin` | Remove all pinned maps (asks for confirmation) |
+| `help` | Show the command list |
+| `exit` / `quit` | Exit the CLI (does **not** unpin maps) |
+
+### Example session
+
+```bash
+xdp-fw> block dst-port 22
+Blocked destination port 22
+xdp-fw> block ip 192.168.1.0/24
+Blocked IP range 192.168.1.0/24
+xdp-fw> status
+Destination Port: 22, flag: 1, count: 0
+IP 10.0.0.2: count: 4213
+xdp-fw> exit
+```
+### Notes
+
+- The rules set here remain active even after the CLI exits — they only
+disappear if `xdp-firewall` itself is restart and the pinned maps are
+removed (unpinned via the `unpin` command).
+- `xdp-firewall-cli` requires `xdp-firewall` to already be running first;
+ otherwise it will report that the pinned maps cannot be found.
+
 # Benchmark: XDP vs iptables — Rule Count Scaling
+
+(it's unavailable now, hope that I will fix it soon)
 
 ## Test Setup
 - Environment: single machine, two network namespaces (`host` / `client`) connected via a `veth` pair
@@ -99,21 +150,21 @@ IP 10.0.0.2: token=499, dropped=0
 
 ```bash
 # build environment
-sudo ./setup_veth_env.sh
+sudo ./script/setup_veth_env.sh
 
 # xdp-firewall test
-sudo ./gen_xdp_ports.sh <rule_number>
+sudo ./script/gen_xdp_ports.sh <rule_number>
 # will show sudo ip netns exec host ./xdp-firewall host_DEV -dp ... 12345
 sudo ip netns exec host ./xdp-firewall host_DEV -dp ... 12345
 # Ctrl + C to see the result
 
 # iptable test
-sudo ./add_iptables_rules.sh
+sudo ./script/add_iptables_rules.sh
 # check the counter
 sudo ip netns exec host iptables -L -v -n | grep 12345
 
 # clean envirmonment
-sudo cleanup_veth_env.sh
+sudo ./script/cleanup_veth_env.sh
 ```
 ## Results
 

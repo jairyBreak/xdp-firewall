@@ -2,3 +2,4 @@
 xdp-firewall
 vmlinux.h
 *.log
+xdp-firewall-cli

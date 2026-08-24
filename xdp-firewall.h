@@ -1,3 +1,4 @@
+// common defined structure
 #ifndef XDP_FIREWALL_H_
 #define XDP_FIREWALL_H_
 
@@ -6,6 +7,8 @@
 #define MAX_PORTS 1024
 #define DEFAULT_REFILL_RATE 10 // 10 packet per ms
 #define DEFAULT_CAPACITY 500 
+
+#define BPF_FS_PATH "/sys/fs/bpf/xdp_fw"
 
 struct tcp_event {
     unsigned int header_len;

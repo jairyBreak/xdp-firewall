@@ -13,6 +13,7 @@
 
 #include "xdp-firewall.skel.h"  // Generated skeleton header
 #include "xdp-firewall.h"
+#include "xdp-firewall-common.h"
 
 volatile sig_atomic_t stop = 0;
 
@@ -68,149 +69,6 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 
     return 0;
 }
-
-static int parse_ip_address(const char *ip_str, __u32 *ip_addr, __u32 *prefixlen){
-    char ip_copy[16];
-    __u32 prefixlen_local = 32;
-
-    if(sscanf(ip_str, "%15[^/]/%u", ip_copy, &prefixlen_local) < 1){
-        fprintf(stderr, "Invalid CIDR: %s\n", ip_str);
-        return -1;
-    }
-    
-    struct in_addr addr;
-    if (inet_pton(AF_INET, ip_copy, &addr.s_addr) != 1) {
-        fprintf(stderr, "Invalid IP: %s\n", ip_str);
-        return -1;
-    }
-
-    *ip_addr = addr.s_addr;
-    *prefixlen = prefixlen_local;
-    return 0;
-}
-
-static void print_rule_info(int map_fd, const char *label)
-{
-    int num_cpus = libbpf_num_possible_cpus();
-    if (num_cpus <= 0) {
-        fprintf(stderr, "Failed to get possible CPU count\n");
-        return;
-    }
-    
-    size_t elem_size = sizeof(struct drop_info);
-    struct drop_info *print_entry = calloc(num_cpus, elem_size);
-    if (!print_entry) {
-        fprintf(stderr, "calloc failed\n");
-        return;
-    }
-
-    __u16 key, next_key;
-    int ret = bpf_map_get_next_key(map_fd, NULL, &next_key);
-
-    while (ret == 0){
-        if(bpf_map_lookup_elem(map_fd, &next_key, print_entry) == 0){
-            __u32 count_sum = 0;
-            for(int i = 0;i < num_cpus;i++){
-                count_sum += print_entry[i].count;
-            }
-            printf("%s: %u, flag: %u, count: %u\n",label, next_key, print_entry[0].flag, count_sum);
-        }
-        key = next_key;
-        ret = bpf_map_get_next_key(map_fd, &key, &next_key);
-    }
-
-    free(print_entry);
-}
-
-static void print_ip_info(int map_fd, const char *label)
-{   
-    int num_cpus = libbpf_num_possible_cpus();
-    __u32 key, next_key;
-    int ret = bpf_map_get_next_key(map_fd, NULL, &next_key);
-
-    if (num_cpus <= 0) {
-        fprintf(stderr, "Failed to get possible CPU count\n");
-        return;
-    }
-    
-    size_t elem_size = sizeof(struct drop_info);
-    __u64 *print_entry = calloc(num_cpus, elem_size);
-    if (!print_entry) {
-        fprintf(stderr, "calloc failed\n");
-        return;
-    }
-
-    
-    while (ret == 0){
-        __u64 entry_sum = 0;
-        if (bpf_map_lookup_elem(map_fd, &next_key, print_entry) == 0){
-            char ip_str[INET_ADDRSTRLEN];
-            for(int i = 0;i < num_cpus;i++){
-                entry_sum += print_entry[i];
-            }
-            if (inet_ntop(AF_INET, &next_key, ip_str, sizeof(ip_str)) != NULL) {
-                printf("%s: %s, count: %llu\n", label, ip_str, entry_sum);
-            }
-        }
-        key = next_key;
-        ret = bpf_map_get_next_key(map_fd, &key, &next_key);
-    }
-
-    free(print_entry);
-}
-
-static void print_bucket_info(int map_fd)
-{
-    __u32 key, next_key;
-    int ret = bpf_map_get_next_key(map_fd, NULL, &next_key);
-
-    while (ret == 0) {
-        struct t_bucket b;
-        if (bpf_map_lookup_elem(map_fd, &next_key, &b) == 0) {
-            struct in_addr addr;
-            addr.s_addr = next_key; 
-            printf("IP %s: token=%llu, dropped=%llu\n",
-                   inet_ntoa(addr), b.token, b.drop_count);
-        }
-        key = next_key;
-        ret = bpf_map_get_next_key(map_fd, &key, &next_key);
-    }
-}
-
-static void set_rule(int map_fd, __u16 port, __u8 flag)
-{   
-    int num_cpus = libbpf_num_possible_cpus();
-    if (num_cpus <= 0) {
-        fprintf(stderr, "Failed to get possible cpus\n");
-        return;
-    }
-    size_t elem_size = sizeof(struct drop_info);
-
-    struct drop_info *entry = calloc(num_cpus, elem_size);
-    if (!entry) {
-        fprintf(stderr, "calloc failed\n");
-        return;
-    }
-
-    int ret1 = bpf_map_lookup_elem(map_fd, &port, entry);
-    for (int i = 0;i < num_cpus;i++){
-        entry[i].flag = flag;
-        if (ret1 != 0){
-            entry[i].count = 0;
-        }
-    }
-
-    bpf_map_update_elem(map_fd, &port, entry, BPF_ANY);
-
-    free(entry);
-}
-
-static void set_ip_rule(int map_fd, struct ipv4_lpm_key ip_key, __u8 flag)
-{
-    __u8 entry = flag;
-    bpf_map_update_elem(map_fd, &ip_key, &entry, BPF_ANY);
-}
-
 
 int main(int argc, char **argv)
 {
@@ -343,6 +201,20 @@ int main(int argc, char **argv)
 
     printf("Successfully attached XDP program to interface %s\n", ifname);
 
+    if (ensure_bpf_fs_dir() != 0) {
+        err = -1;
+        goto cleanup;
+    }
+
+    if (bpf_map__pin(skel->maps.src_port_map, BPF_FS_PATH "/src_port_map") ||
+        bpf_map__pin(skel->maps.dst_port_map, BPF_FS_PATH "/dst_port_map") ||
+        bpf_map__pin(skel->maps.ipv4_lpm_map, BPF_FS_PATH "/ipv4_lpm_map") ||
+        bpf_map__pin(skel->maps.bucket_map, BPF_FS_PATH "/bucket_map") ||
+        bpf_map__pin(skel->maps.rate_map, BPF_FS_PATH "/rate_map") ||
+        bpf_map__pin(skel->maps.ip_count_map, BPF_FS_PATH "/ip_count_map"))
+    {
+        fprintf(stderr, "Warning: failed to pin one or more maps: %s\n", strerror(errno));
+    }
 
     for (int j = 0; j < src_count; j++){
         set_rule(bpf_map__fd(skel->maps.src_port_map), src_port[j], 1);

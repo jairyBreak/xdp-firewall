@@ -19,6 +19,8 @@ CFLAGS := -g -Wall
 ALL_LDFLAGS := $(LDFLAGS) $(EXTRA_LDFLAGS)
 
 APPS = xdp-firewall
+CTL_APPS := xdp-firewall-cli
+
 
 CLANG_BPF_SYS_INCLUDES ?= $(shell $(CLANG) -v -E - </dev/null 2>&1 \
 	| sed -n '/<...> search starts here:/,/End of search list./{ s| \(/.*\)|-idirafter \1|p }')
@@ -33,12 +35,12 @@ else
 endif
 
 .PHONY: all
-all: $(APPS)
+all: $(APPS) $(CTL_APPS)
 
 .PHONY: clean
 clean:
 	$(call msg,CLEAN)
-	$(Q)rm -rf $(OUTPUT) $(APPS)
+	$(Q)rm -rf $(OUTPUT) $(APPS) $(CTL_APPS)
 
 $(OUTPUT):
 	$(call msg,MKDIR,$@)
@@ -68,8 +70,16 @@ $(OUTPUT)/%.o: %.c $(wildcard %.h) | $(OUTPUT)
 	$(call msg,CC,$@)
 	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $(filter %.c,$^) -o $@
 
-# Build application binary
-$(APPS): %: $(OUTPUT)/%.o | $(OUTPUT)
+$(OUTPUT)/xdp-firewall-common.o: xdp-firewall-common.c xdp-firewall-common.h xdp-firewall.h | $(OUTPUT)
+	$(call msg,CC,$@)
+	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c xdp-firewall-common.c -o $@
+
+# Build application binaries (each needs the common object linked in)
+xdp-firewall: $(OUTPUT)/xdp-firewall.o $(OUTPUT)/xdp-firewall-common.o | $(OUTPUT)
+	$(call msg,BINARY,$@)
+	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) $(LIBBPF_LIBS) -lelf -lz -o $@
+
+xdp-firewall-cli: $(OUTPUT)/xdp-firewall-cli.o $(OUTPUT)/xdp-firewall-common.o | $(OUTPUT)
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) $(LIBBPF_LIBS) -lelf -lz -o $@
 
