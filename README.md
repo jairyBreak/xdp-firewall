@@ -138,8 +138,6 @@ removed (unpinned via the `unpin` command).
 
 # Benchmark: XDP vs iptables — Rule Count Scaling
 
-(it's unavailable now, hope that I will fix it soon)
-
 ## Test Setup
 - Environment: single machine, two network namespaces (`host` / `client`) connected via a `veth` pair
 - Attack: `hping3 -S -p 12345 --flood`, 10-second window
@@ -189,4 +187,26 @@ sudo taskset -c 5 timeout 10 ip netns exec client hping3 -S -p 12345 --flood 10.
 ```
 
 After isolation, iptables' throughput recovered by ~31%, while XDP was unaffected. XDP still held a ~2.9x advantage, confirming the rule-count scaling gap is a real architectural effect — CPU contention only amplified it in this single-machine test setup, it wasn't the root cause.
+
+## Reproducing the Benchmark
+
+The performance benchmark in this project was conducted inside network
+namespaces (using `ip netns` + a `veth` pair) to simulate two hosts on a
+single machine. This introduces one environmental quirk worth noting:
+
+**bpffs pinning inside a network namespace is isolated from the host's
+`/sys/fs/bpf`.** This means `bpf_map__pin()` calls in `xdp-firewall.c`
+(used to expose maps to `xdp-firewall-cli`) will attempt to create a
+directory in a namespace-local bpffs view, which may behave differently
+than a normal deployment on a real interface.
+
+If you're reproducing the benchmark results inside a similar `veth`/netns
+setup, and you don't need the CLI tool during benchmarking, **comment out
+the `ensure_bpf_fs_dir()` and `bpf_map__pin(...)` calls** in
+`xdp-firewall.c` (around [line X]) before building. This avoids the
+pinning step entirely — the benchmark itself doesn't rely on pinned maps;
+only `xdp-firewall-cli` does.
+
+In a normal deployment on a real network interface (not inside a network
+namespace), pinning works as expected and no changes are needed.
 

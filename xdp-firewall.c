@@ -201,6 +201,14 @@ int main(int argc, char **argv)
 
     printf("Successfully attached XDP program to interface %s\n", ifname);
 
+
+    /* 
+     NOTE: pin/mkdir will fail inside a network namespace created via `ip netns add` 
+     — the netns-local /sys/fs/bpf view is mounted read-only in this environment. 
+     This is a property of the veth/netns test setup, not a bug in this code. 
+     Comment out the block below when reproducing benchmarks inside such an environment; 
+     pinning works normally when xdp-firewall is attached to a real network interface outside a netns.
+    */
     if (ensure_bpf_fs_dir() != 0) {
         err = -1;
         goto cleanup;
