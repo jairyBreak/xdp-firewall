@@ -1,8 +1,12 @@
-# XDP-firewall
+# XDP-guard
 
 A stateless packet-filtering firewall prototype built on XDP/eBPF, 
 designed to explore whether XDP's in-driver packet processing can 
-outperform traditional iptables-based filtering
+outperform traditional iptables-based filtering.
+
+<p align="center">
+  <img src="./assets/demo_x.gif" alt="XDP Firewall Demo" width="850">
+</p>
 
 (work in progress)
 
@@ -111,7 +115,9 @@ sudo ./xdp-firewall-cli
 | `block dst-port <port>` | Block a destination port |
 | `block src-port <port>` | Block a source port |
 | `block ip <cidr>` | Block an IP address or CIDR range (e.g. `10.0.0.0/24`) |
-| `status` | Show all current rules and their hit counts |
+| `set capacity <value>` | Set the capacity of bucket to target value |
+| `set refill-rate <value>` | Set the refill rate of bucket to target value |
+| `status [target]` | Show status for a specific target (`ip`, `port`, `bucket`) |
 | `unpin` | Remove all pinned maps (asks for confirmation) |
 | `help` | Show the command list |
 | `exit` / `quit` | Exit the CLI (does **not** unpin maps) |

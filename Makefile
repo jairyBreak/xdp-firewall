@@ -81,7 +81,7 @@ xdp-firewall: $(OUTPUT)/xdp-firewall.o $(OUTPUT)/xdp-firewall-common.o | $(OUTPU
 
 xdp-firewall-cli: $(OUTPUT)/xdp-firewall-cli.o $(OUTPUT)/xdp-firewall-common.o | $(OUTPUT)
 	$(call msg,BINARY,$@)
-	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) $(LIBBPF_LIBS) -lelf -lz -o $@
+	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) $(LIBBPF_LIBS) -lelf -lz -lreadline -o $@
 
 .DELETE_ON_ERROR:
 .SECONDARY:

@@ -70,6 +70,16 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
     return 0;
 }
 
+static void print_cool_banner(void)
+{
+    puts("   _  ______  ____     ________  __  ____    ____  ____ ");
+    puts("  | |/ / __ \\/ __ \\   / ____/ / / / /   |   / __ \\/ __ \\");
+    puts("  |   / / / / /_/ /  / / __/ / / / / /| |  / /_/ / / / /");
+    puts(" /   / /_/ / ____/  / /_/ / /_/ / / ___ | / _, _/ /_/ / ");
+    puts("/_/|_\\____/_/       \\____/\\____/_/_/  |_|/_/ |_/_____/  ");
+    puts("----------------------------------------------------------");
+}
+
 int main(int argc, char **argv)
 {
     struct xdp_firewall_bpf *skel;
@@ -199,8 +209,8 @@ int main(int argc, char **argv)
         goto cleanup;
     }
 
+    print_cool_banner();
     printf("Successfully attached XDP program to interface %s\n", ifname);
-
 
     /* 
      NOTE: pin/mkdir will fail inside a network namespace created via `ip netns add` 
@@ -261,8 +271,8 @@ int main(int argc, char **argv)
     }
     
     printf("\n---map_info---\n");
-    print_ip_info(bpf_map__fd(skel->maps.ip_count_map), "IP Rule");
-    //print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
+    print_ip_info(bpf_map__fd(skel->maps.ip_count_map), "IPv4 Address");
+    print_rule_info(bpf_map__fd(skel->maps.src_port_map), "Source Port");
     print_rule_info(bpf_map__fd(skel->maps.dst_port_map), "Destination Port");
     printf("---bucket drop info---\n");
     print_bucket_info(bpf_map__fd(skel->maps.bucket_map));

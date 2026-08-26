@@ -81,7 +81,7 @@ static bool is_tcp(struct ethhdr *eth, void *data_end)
 
 static int consume_bucket(struct t_bucket *b){
     int result;
-    __u16 key = 0;
+    __u32 key = 0;
     __u64 refill_rate, capacity;
     struct rate_config *conf = bpf_map_lookup_elem(&rate_map, &key);
 

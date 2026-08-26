@@ -6,6 +6,8 @@
 
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 #include "xdp-firewall.h"          
 #include "xdp-firewall-common.h"   
@@ -16,6 +18,8 @@ static void print_help(void)
     printf("  block dst-port <port>       Block a destination port\n");
     printf("  block src-port <port>       Block a source port\n");
     printf("  block ip <cidr>             Block an IP or CIDR range (e.g. 10.0.0.0/24)\n");
+    printf("  set capacity <value>        Set the capacity of bucket to target value\n");
+    printf("  set refill-rate <value>     Set the refill_rate of bucket to target value\n");
     printf("  status                      Show current rules and statistics\n");
     printf("  unpin                       Remove all pinned maps\n");
     printf("  exit / quit                 Exit the CLI\n");
@@ -75,30 +79,64 @@ static void handle_block_ip(const char *cidr_str)
     close(fd);
 }
 
-static void handle_status(void)
-{
-    int src_fd = open_pinned_map("src_port_map");
-    if (src_fd >= 0) {
-        print_rule_info(src_fd, "Source Port");
-        close(src_fd);
+static void handle_rate(const char *target_str, const char *value_str){
+    int rate_fd = open_pinned_map("rate_map");
+    if (rate_fd < 0) return;
+
+    __u32 key = 0;
+    struct rate_config conf = {0};
+
+    bpf_map_lookup_elem(rate_fd, &key, &conf);
+
+    __u64 value = (__u64)atoi(value_str);
+
+    if(strcmp(target_str, "capacity") == 0){
+        conf.capacity = value;
+    }
+    else{
+        conf.refill_rate = value;
     }
 
-    int dst_fd = open_pinned_map("dst_port_map");
-    if (dst_fd >= 0) {
-        print_rule_info(dst_fd, "Destination Port");
-        close(dst_fd);
+    bpf_map_update_elem(rate_fd, &key, &conf, BPF_ANY);
+    printf("Set %s -> %llu\n", target_str, value);
+    close(rate_fd);
+}
+
+static void handle_status(const char *target_str)
+{      
+    int show_all = 0;
+    if(target_str == NULL){
+        show_all = 1;
     }
 
-    int ip_fd = open_pinned_map("ipv4_lpm_map");
-    if (ip_fd >= 0) {
-        print_ip_info(ip_fd, "IP Rule");
-        close(ip_fd);
+    if(show_all || strcmp(target_str, "ip") == 0){
+        int ip_fd = open_pinned_map("ip_count_map");
+        if (ip_fd >= 0) {
+            print_ip_info(ip_fd, "IPv4 Address");
+            close(ip_fd);
+        }
     }
 
-    int bucket_fd = open_pinned_map("bucket_map");
-    if (bucket_fd >= 0) {
-        print_bucket_info(bucket_fd);
-        close(bucket_fd);
+    if(show_all || strcmp(target_str, "port") == 0){
+        int src_fd = open_pinned_map("src_port_map");
+        if (src_fd >= 0) {
+            print_rule_info(src_fd, "Source Port");
+            close(src_fd);
+        }
+
+        int dst_fd = open_pinned_map("dst_port_map");
+        if (dst_fd >= 0) {
+            print_rule_info(dst_fd, "Destination Port");
+            close(dst_fd);
+        }
+    }   
+
+    if(show_all || strcmp(target_str, "bucket") == 0){
+        int bucket_fd = open_pinned_map("bucket_map");
+        if (bucket_fd >= 0) {
+            print_bucket_info(bucket_fd);
+            close(bucket_fd);
+        }
     }
 }
 
@@ -131,7 +169,7 @@ static void handle_command(char *line)
     char *cmd = strtok(line, " ");
     if (!cmd) return;
 
-    if (strcmp(cmd, "block") == 0) {
+    if (strcmp(cmd, "block") == 0 || strcmp(cmd, "set") == 0) {
         char *target = strtok(NULL, " ");
         char *value = strtok(NULL, " ");
 
@@ -139,19 +177,21 @@ static void handle_command(char *line)
             fprintf(stderr, "Usage: block <dst-port|src-port|ip> <value>\n");
             return;
         }
-
         if (strcmp(target, "dst-port") == 0) {
             handle_block_dst_port(value);
         } else if (strcmp(target, "src-port") == 0) {
             handle_block_src_port(value);
         } else if (strcmp(target, "ip") == 0) {
             handle_block_ip(value);
+        } else if (strcmp(target, "capacity") == 0 || strcmp(target, "refill-rate") == 0){
+            handle_rate(target, value);
         } else {
             fprintf(stderr, "Unknown block target: %s\n", target);
         }
     }
     else if (strcmp(cmd, "status") == 0) {
-        handle_status();
+        char *target = strtok(NULL, " ");
+        handle_status(target);
     }
     else if (strcmp(cmd, "help") == 0) {
         print_help();
@@ -180,27 +220,26 @@ int main(int argc, char **argv)
 {
     printf("XDP Firewall Control CLI\n");
     printf("Type 'help' for available commands.\n\n");
+    char* line = NULL;
 
-    char line[256];
     while (1) {
-        printf("xdp-fw> ");
-        fflush(stdout);
-
-        if (!fgets(line, sizeof(line), stdin)) {
+        line = readline("xdp-fw> ");
+        
+        if (!line || strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
             break;
         }
 
-        line[strcspn(line, "\n")] = 0;  
-
         if (strlen(line) == 0) {
+            free(line);
             continue;
         }
 
-        if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0) {
-            break;
-        }
+        add_history(line);
 
         handle_command(line);
+
+        free(line);
+        line = NULL;
     }
 
     printf("Goodbye.\n");
