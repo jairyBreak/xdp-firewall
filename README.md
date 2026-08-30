@@ -112,9 +112,9 @@ sudo ./xdp-firewall-cli
 
 | Command | Description |
 |---|---|
-| `block dst-port <port>` | Block a destination port |
-| `block src-port <port>` | Block a source port |
-| `block ip <cidr>` | Block an IP address or CIDR range (e.g. `10.0.0.0/24`) |
+| `block/unblock dst-port <port>` | Block/Unblock a destination port |
+| `block/unblock src-port <port>` | Block/Unblock a source port |
+| `block/unblock ip <cidr>` | Block/Unblock an IP address or CIDR range (e.g. `10.0.0.0/24`) |
 | `set capacity <value>` | Set the capacity of bucket to target value |
 | `set refill-rate <value>` | Set the refill rate of bucket to target value |
 | `status [target]` | Show status for a specific target (`ip`, `port`, `bucket`) |

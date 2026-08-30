@@ -15,14 +15,14 @@
 static void print_help(void)
 {
     printf("Available commands:\n");
-    printf("  block dst-port <port>       Block a destination port\n");
-    printf("  block src-port <port>       Block a source port\n");
-    printf("  block ip <cidr>             Block an IP or CIDR range (e.g. 10.0.0.0/24)\n");
-    printf("  set capacity <value>        Set the capacity of bucket to target value\n");
-    printf("  set refill-rate <value>     Set the refill_rate of bucket to target value\n");
-    printf("  status                      Show current rules and statistics\n");
-    printf("  unpin                       Remove all pinned maps\n");
-    printf("  exit / quit                 Exit the CLI\n");
+    printf("  block/unblock dst-port <port>   Block/Unblock a destination port\n");
+    printf("  block/unblock src-port <port>   Block/Unblock a source port\n");
+    printf("  block/unblock ip <cidr>         Block/Unblock an IP or CIDR range (e.g. 10.0.0.0/24)\n");
+    printf("  set capacity <value>            Set the capacity of bucket to target value\n");
+    printf("  set refill-rate <value>         Set the refill_rate of bucket to target value\n");
+    printf("  status                          Show current rules and statistics\n");
+    printf("  unpin                           Remove all pinned maps\n");
+    printf("  exit / quit                     Exit the CLI\n");
 }
 
 static int open_pinned_map(const char *name)
@@ -38,31 +38,36 @@ static int open_pinned_map(const char *name)
     return fd;
 }
 
-static void handle_block_dst_port(const char *port_str)
+static void handle_block_dst_port(const char *port_str, __u8 flag)
 {
     int fd = open_pinned_map("dst_port_map");
     if (fd < 0) return;
 
     __u16 port = (__u16)atoi(port_str);
-    set_rule(fd, port, 1);
-    printf("Blocked destination port %u\n", port);
+    set_rule(fd, port, flag);
+
+    if(flag){printf("Blocked ");}
+    else{printf("Unblocked ");}
+    printf("destination port %u\n", port);
 
     close(fd);
 }
 
-static void handle_block_src_port(const char *port_str)
+static void handle_block_src_port(const char *port_str, __u8 flag)
 {
     int fd = open_pinned_map("src_port_map");
     if (fd < 0) return;
 
     __u16 port = (__u16)atoi(port_str);
-    set_rule(fd, port, 1);
-    printf("Blocked source port %u\n", port);
+    set_rule(fd, port, flag);
+    if(flag){printf("Blocked ");}
+    else{printf("Unblocked ");}
+    printf("source port %u\n", port);
 
     close(fd);
 }
 
-static void handle_block_ip(const char *cidr_str)
+static void handle_block_ip(const char *cidr_str,__u8 flag)
 {
     int fd = open_pinned_map("ipv4_lpm_map");
     if (fd < 0) return;
@@ -73,8 +78,10 @@ static void handle_block_ip(const char *cidr_str)
         return;
     }
 
-    set_ip_rule(fd, key, 1);
-    printf("Blocked IP range %s\n", cidr_str);
+    set_ip_rule(fd, key, flag);
+    if(flag){printf("Blocked ");}
+    else{printf("Unblocked ");}
+    printf("IP range %s\n", cidr_str);
 
     close(fd);
 }
@@ -178,15 +185,26 @@ static void handle_command(char *line)
             return;
         }
         if (strcmp(target, "dst-port") == 0) {
-            handle_block_dst_port(value);
+            handle_block_dst_port(value, 1);
         } else if (strcmp(target, "src-port") == 0) {
-            handle_block_src_port(value);
+            handle_block_src_port(value, 1);
         } else if (strcmp(target, "ip") == 0) {
-            handle_block_ip(value);
+            handle_block_ip(value, 1);
         } else if (strcmp(target, "capacity") == 0 || strcmp(target, "refill-rate") == 0){
             handle_rate(target, value);
         } else {
             fprintf(stderr, "Unknown block target: %s\n", target);
+        }
+    }
+    else if (strcmp(cmd, "unblock") == 0) {
+        char *target = strtok(NULL, " ");
+        char *value = strtok(NULL, " ");
+        if (strcmp(target, "dst-port") == 0) {
+            handle_block_dst_port(value, 0);
+        } else if (strcmp(target, "src-port") == 0) {
+            handle_block_src_port(value, 0);
+        } else if (strcmp(target, "ip") == 0) {
+            handle_block_ip(value, 0);
         }
     }
     else if (strcmp(cmd, "status") == 0) {

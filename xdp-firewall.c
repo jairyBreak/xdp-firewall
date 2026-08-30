@@ -190,11 +190,36 @@ int main(int argc, char **argv)
     }
 
     /* Open and load BPF application */
-    skel = xdp_firewall_bpf__open_and_load();
+    skel = xdp_firewall_bpf__open();
     if (!skel)
     {
         fprintf(stderr, "Failed to open BPF skeleton\n");
         return 1;
+    }
+
+    /* 
+     NOTE: pin/mkdir will fail inside a network namespace created via `ip netns add` 
+     — the netns-local /sys/fs/bpf view is mounted read-only in this environment. 
+     This is a property of the veth/netns test setup, not a bug in this code. 
+     Comment out the block below when reproducing benchmarks inside such an environment; 
+     pinning works normally when xdp-firewall is attached to a real network interface outside a netns.
+    */
+    if (ensure_bpf_fs_dir() != 0) {
+        err = -1;
+        goto cleanup;
+    }
+
+    bpf_map__set_pin_path(skel->maps.src_port_map, BPF_FS_PATH "/src_port_map");
+    bpf_map__set_pin_path(skel->maps.dst_port_map, BPF_FS_PATH "/dst_port_map");
+    bpf_map__set_pin_path(skel->maps.ipv4_lpm_map, BPF_FS_PATH "/ipv4_lpm_map");
+    bpf_map__set_pin_path(skel->maps.bucket_map, BPF_FS_PATH "/bucket_map");
+    bpf_map__set_pin_path(skel->maps.rate_map, BPF_FS_PATH "/rate_map");
+    bpf_map__set_pin_path(skel->maps.ip_count_map, BPF_FS_PATH "/ip_count_map");
+
+    err = xdp_firewall_bpf__load(skel);
+    if (err) {
+        fprintf(stderr, "Failed to load BPF skeleton: %d\n", err);
+        goto cleanup;
     }
 
     bpf_map_update_elem(bpf_map__fd(skel->maps.rate_map), &key, &conf, BPF_ANY);
@@ -212,27 +237,6 @@ int main(int argc, char **argv)
     print_cool_banner();
     printf("Successfully attached XDP program to interface %s\n", ifname);
 
-    /* 
-     NOTE: pin/mkdir will fail inside a network namespace created via `ip netns add` 
-     — the netns-local /sys/fs/bpf view is mounted read-only in this environment. 
-     This is a property of the veth/netns test setup, not a bug in this code. 
-     Comment out the block below when reproducing benchmarks inside such an environment; 
-     pinning works normally when xdp-firewall is attached to a real network interface outside a netns.
-    */
-    if (ensure_bpf_fs_dir() != 0) {
-        err = -1;
-        goto cleanup;
-    }
-
-    if (bpf_map__pin(skel->maps.src_port_map, BPF_FS_PATH "/src_port_map") ||
-        bpf_map__pin(skel->maps.dst_port_map, BPF_FS_PATH "/dst_port_map") ||
-        bpf_map__pin(skel->maps.ipv4_lpm_map, BPF_FS_PATH "/ipv4_lpm_map") ||
-        bpf_map__pin(skel->maps.bucket_map, BPF_FS_PATH "/bucket_map") ||
-        bpf_map__pin(skel->maps.rate_map, BPF_FS_PATH "/rate_map") ||
-        bpf_map__pin(skel->maps.ip_count_map, BPF_FS_PATH "/ip_count_map"))
-    {
-        fprintf(stderr, "Warning: failed to pin one or more maps: %s\n", strerror(errno));
-    }
 
     for (int j = 0; j < src_count; j++){
         set_rule(bpf_map__fd(skel->maps.src_port_map), src_port[j], 1);
